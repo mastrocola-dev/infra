@@ -35,7 +35,7 @@ env:
   WORKING_DIR: infra/foundation
 
 jobs:
-  terraform:
+  infra:
     runs-on: ubuntu-latest
     defaults:
       run:
