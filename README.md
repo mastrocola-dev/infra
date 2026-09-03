@@ -2,14 +2,16 @@
 
 Infrastructure-as-code foundation for my personal engineering portfolio, designed the way I would bootstrap a real company: identity first, least privilege everywhere, no long-lived credentials, and cost guardrails from day one.
 
-Everything here runs on an Azure free-tier-friendly footprint, but every decision was made as if this subscription would one day host production fintech workloads — because it might.
+**Status: deployed and operational.** Every resource in this subscription is now managed by code — changes land via pull request (plan) and merge to `main` (apply), with zero stored credentials.
+
+Everything runs on an Azure free-tier-friendly footprint, but every decision was made as if this subscription would one day host production fintech workloads — because it might.
 
 ## Architecture at a glance
 
 ```
 GitHub Actions ──OIDC (no secrets)──> Microsoft Entra ID ──RBAC──> Azure
      │                                                              │
-     │  terraform plan/apply                                        │
+     │  PR: terraform plan / main: terraform apply                  │
      └───────────> azurerm backend <── rg-tfstate (state, versioned)
                         │
                         └────────────> rg-portfolio-dev (workloads)
@@ -38,7 +40,14 @@ GitHub Actions authenticates to Azure through workload identity federation: the 
 
 One battle scar worth documenting: **GitHub changed its default OIDC subject format for repositories created after July 15, 2026**. New repos emit immutable subjects that embed owner and repository IDs (`repo:owner@123/repo@456:ref:…`) instead of the historical name-based format. The Azure portal's guided "GitHub Actions" federated-credential scenario still generates the name-based subject, so the trust never matches and every login fails with `AADSTS700213`.
 
-The fix: create the federated credential with the **Other issuer** scenario and the exact immutable subject from the token. The security rationale is sound — name-based subjects are vulnerable to *subject recycling*, where an abandoned org/repo name is re-registered by someone else who can then mint matching tokens against your cloud trust.
+The fix: create federated credentials with the **Other issuer** scenario and the exact immutable subject from the token. Two credentials exist:
+
+| Credential | Subject | Used by |
+|---|---|---|
+| `github-main-immutable` | `repo:<owner>@<id>/<repo>@<id>:ref:refs/heads/main` | push to `main` (apply) |
+| `github-pull-request-immutable` | `repo:<owner>@<id>/<repo>@<id>:pull_request` | pull requests (plan) |
+
+The security rationale behind the format change is sound — name-based subjects are vulnerable to *subject recycling*, where an abandoned org/repo name is re-registered by someone else who can then mint matching tokens against your cloud trust.
 
 ### 3. Least privilege, enforced by architecture
 
@@ -57,15 +66,38 @@ Terraform state is the most sensitive artifact in any IaC setup. The backend sto
 - **Blob versioning + 14-day soft delete** — point-in-time recovery from a corrupted or mistakenly overwritten state.
 - **No public access, TLS 1.2 minimum.**
 
-### 5. Cost guardrails as code
+Disabling shared keys has a provider-side consequence — see lessons learned below.
+
+### 5. CI pipeline with guardrails
+
+The workflow (`.github/workflows/infra.yml`) plans on pull requests and applies on merge to `main`, with:
+
+- **Concurrency group with `cancel-in-progress: false`** — Terraform runs queue instead of being cancelled mid-apply, avoiding orphaned state locks and half-created resources.
+- **`-lock-timeout=5m`** — a CI run waits politely if a local run holds the state lock.
+- **Pinned Terraform version** — reproducible runs; upgrades are deliberate commits.
+- **Path filters** — the pipeline only triggers on changes to `infra/foundation/**` or the workflow itself.
+
+The apply step is gated on `github.ref == 'refs/heads/main'`; pull request refs (`refs/pull/N/merge`) can never apply.
+
+### 6. Cost guardrails as code
 
 A subscription-level monthly budget with alerts at 50/80/100% actual spend plus a forecasted-overrun alert is part of the bootstrap layer. Workload resources default to the cheapest sensible SKUs (LRS, Cool tier). The bill is an architectural constraint, not an afterthought.
+
+## Lessons learned (battle scars)
+
+Real issues hit during the first deployment, kept here because they will bite others:
+
+1. **Immutable OIDC subjects (`AADSTS700213`)** — see design decision 2. If your repo was created after July 15, 2026, the portal's guided scenario produces a credential that will never match.
+2. **`shared_access_key_enabled = false` breaks the azurerm provider's defaults.** The provider validates storage data planes using shared keys unless told otherwise, so creating the hardened account failed with `403 KeyBasedAuthenticationNotPermitted`. Fix, in the bootstrap provider block: `storage_use_azuread = true` plus `features { storage { data_plane_available = false } }`. The second setting also sidesteps a bootstrap ordering problem: the human operator's data-plane role assignment is created *after* the account, so post-create data-plane polling would 403 anyway.
+3. **Recreating a storage account under the same name races DNS.** A destroy/recreate cycle hit a transient `404` while the provider read back properties of the fresh account — the endpoint's DNS was still propagating. The resource was fine; `terraform untaint` + a follow-up `apply` reconciled cleanly. Patience beats panic.
+4. **`vars.` vs `secrets.` in GitHub Actions fail silently.** Referencing an undefined repository *variable* interpolates an empty string — the init failed with `accountName cannot be an empty string`, not with a helpful "variable not found". The `TFSTATE_*` values live in the **Variables** tab; only the `AZURE_*` IDs are stored as secrets (and even those are identifiers, not credentials).
+5. **Shell dialects matter.** The import one-liners below exist in bash and PowerShell variants for a reason.
 
 ## Repository layout
 
 ```
 .
-├── .github/workflows/terraform.yml   # CI: init → fmt → validate → plan → apply
+├── .github/workflows/infra.yml       # CI: init → fmt → validate → plan → apply
 ├── infra/
 │   ├── bootstrap/                    # human-applied: state backend, budget, RBAC
 │   │   ├── main.tf
@@ -80,22 +112,38 @@ A subscription-level monthly budget with alerts at 50/80/100% actual spend plus 
 
 ## Getting started
 
-Prerequisites: Terraform ≥ 1.9, Azure CLI, an Azure subscription, and the one-time manual identity setup (verified custom domain, admin user, app registration with an OIDC federated credential — see design decisions above for why the CI identity is not self-provisioned: the identity that runs Terraform cannot create itself).
+Prerequisites: Terraform ≥ 1.9, Azure CLI, an Azure subscription, and the one-time manual identity setup (verified custom domain, admin user, app registration with the two OIDC federated credentials — see design decisions above for why the CI identity is not self-provisioned: the identity that runs Terraform cannot create itself).
 
 ### Bootstrap (once, locally)
 
-```bash
-az login   # as the human Owner identity
+Authenticate interactively — username/password on the CLI is not compatible with enforced MFA:
 
+```bash
+az login   # opens the browser; use --use-device-code on headless shells
+```
+
+```bash
+# bash
 cd infra/bootstrap
 cp terraform.tfvars.example terraform.tfvars   # fill in your values
 terraform init
 
-# Adopt the pre-existing Contributor role assignment created via portal:
 ASSIGNMENT_ID=$(az role assignment list \
   --resource-group rg-portfolio-dev \
   --query "[?roleDefinitionName=='Contributor' && principalType=='ServicePrincipal'].id | [0]" -o tsv)
 terraform import azurerm_role_assignment.ci_workload_contributor "$ASSIGNMENT_ID"
+
+terraform apply
+```
+
+```powershell
+# PowerShell
+cd infra/bootstrap
+Copy-Item terraform.tfvars.example terraform.tfvars   # fill in your values
+terraform init
+
+$ASSIGNMENT_ID = az role assignment list --resource-group rg-portfolio-dev --query "[?roleDefinitionName=='Contributor' && principalType=='ServicePrincipal'].id | [0]" -o tsv
+terraform import azurerm_role_assignment.ci_workload_contributor $ASSIGNMENT_ID
 
 terraform apply
 ```
@@ -107,9 +155,9 @@ The apply also executes an `import` block that adopts the manually created `rg-p
 In the GitHub repository, create:
 
 - **Secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
-- **Variables**: `TFSTATE_RESOURCE_GROUP` (`rg-tfstate`), `TFSTATE_STORAGE_ACCOUNT` (from the bootstrap output)
+- **Variables** (the Variables tab, not Secrets): `TFSTATE_RESOURCE_GROUP`, `TFSTATE_STORAGE_ACCOUNT` (from the bootstrap output)
 
-Push to `main` (or trigger the workflow manually) and the foundation layer plans and applies with zero stored credentials.
+Open a pull request touching `infra/foundation/**` and the pipeline plans; merge it and the pipeline applies. No credentials stored anywhere.
 
 ### Local foundation runs (optional)
 
@@ -119,12 +167,16 @@ terraform init -backend-config=backend.hcl   # paste the bootstrap output into b
 terraform plan
 ```
 
+## Security note on public contributions
+
+Plans run on pull requests, and a plan executes data sources and reads state. For a personal repository this is fine; if this repo ever accepts external contributions, gate fork-triggered runs (GitHub already requires approval for first-time contributors by default) or move plans behind a GitHub Environment with required reviewers.
+
 ## Roadmap
 
-- **PR-based plans** — add a second federated credential for the `pull_request` OIDC subject so plans can run on pull requests before merge.
 - **Environments** — promote the layout to `dev`/`prd` with separate state keys and GitHub environment protection rules.
+- **PR plan feedback** — post the plan output as a PR comment for review ergonomics.
 - **First workloads** — an event-driven data pipeline (Airflow + messaging) and a parametrizable BPMN decision engine, drawing on my background in fintech backends and data engineering.
 
 ---
 
-*Built by [Marcio Mastrocola Alcantara](https://www.linkedin.com/in/marciomastrocola) — Software Architect & Tech Lead. This repository doubles as documentation of how I approach greenfield cloud foundations.*
+*Built by [Marcio Mastrocola Alcantara](https://www.linkedin.com/in/marcio-mastrocola) — Software Architect & Tech Lead. This repository doubles as documentation of how I approach greenfield cloud foundations — including the parts that didn't work on the first try.*
