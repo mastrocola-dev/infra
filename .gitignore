@@ -1,0 +1,20 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+
+# Sensitive / environment-specific
+*.tfvars
+!*.tfvars.example
+backend.hcl
+
+# Lock files ARE committed (reproducible provider versions)
+!.terraform.lock.hcl
+
+# OS / editor noise
+.DS_Store
+.vscode/
+.idea/
