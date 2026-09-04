@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "infra/foundation/**"
+      - "foundation/**"
       - ".github/workflows/infra.yml"
   pull_request:
     branches: [main]
     paths:
-      - "infra/foundation/**"
+      - "foundation/**"
       - ".github/workflows/infra.yml"
   workflow_dispatch:
     inputs:
@@ -32,7 +32,7 @@ env:
   ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   TF_IN_AUTOMATION: "true"
-  WORKING_DIR: infra/foundation
+  WORKING_DIR: foundation
 
 jobs:
   infra:

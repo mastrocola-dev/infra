@@ -1,182 +1,55 @@
-# Cloud Foundation — Azure + Terraform + GitHub Actions
+# infra
 
-Infrastructure-as-code foundation for my personal engineering portfolio, designed the way I would bootstrap a real company: identity first, least privilege everywhere, no long-lived credentials, and cost guardrails from day one.
+Azure infrastructure for [mastrocola.dev](https://github.com/mastrocola-dev), managed with Terraform.
 
-**Status: deployed and operational.** Every resource in this subscription is now managed by code — changes land via pull request (plan) and merge to `main` (apply), with zero stored credentials.
-
-Everything runs on an Azure free-tier-friendly footprint, but every decision was made as if this subscription would one day host production fintech workloads — because it might.
-
-## Architecture at a glance
+## Structure
 
 ```
-GitHub Actions ──OIDC (no secrets)──> Microsoft Entra ID ──RBAC──> Azure
-     │                                                              │
-     │  PR: terraform plan / main: terraform apply                  │
-     └───────────> azurerm backend <── rg-tfstate (state, versioned)
-                        │
-                        └────────────> rg-portfolio-dev (workloads)
+bootstrap/     Terraform state backend (resource group, storage account) — applied manually
+foundation/    Core platform resources — applied via CI
 ```
 
-| Layer | Directory | Applied by | State |
-|---|---|---|---|
-| Bootstrap | `infra/bootstrap` | Human Owner, locally, once | Local |
-| Foundation | `infra/foundation` | CI (GitHub Actions) | Remote (Azure Blob) |
+`bootstrap` is intentionally outside CI: it creates the storage account that holds all Terraform state, so it cannot depend on that state existing. It runs manually, once, and rarely changes.
 
-## Key design decisions
+## Pipeline
 
-### 1. Identity before infrastructure
+[`infra.yml`](.github/workflows/infra.yml) runs on changes to `foundation/**`:
 
-The subscription was set up with a deliberate separation of identities:
+| Trigger | Behavior |
+|---|---|
+| Pull request to `main` | `fmt` check, `validate`, `plan` |
+| Push to `main` | plan + `apply` |
+| Manual dispatch | plan, with optional apply (`apply: true`) |
 
-- **Working identity** (`marcio@…`) — a native Entra ID user on a verified custom domain, holding Global Administrator + subscription Owner, protected by MFA. Used for all day-to-day administration.
-- **Break-glass account** — the original account that created the tenant (an external Microsoft account). Demoted from daily use, credentials stored offline, kept because it retains billing ownership and an authentication path independent of the custom domain — exactly what you want when DNS is on fire.
-- **CI identity** (`github-actions-portfolio`) — an app registration with **zero standing credentials**. No client secrets exist anywhere in this project.
+A single concurrency group serializes runs, preventing state lock contention.
 
-Tenant-level *elevated access* ("User Access Administrator" at root scope) was explicitly revoked after initial setup to minimize blast radius.
+## Authentication
 
-### 2. Passwordless CI/CD with OIDC — and the immutable-subject lesson
+The pipeline authenticates to Azure via OIDC federation — no stored credentials. The Entra application trusts GitHub's immutable subject format (`repo:owner@id/repo@id:...`), with one federated credential for `main` and one for pull requests.
 
-GitHub Actions authenticates to Azure through workload identity federation: the runner presents a short-lived token issued by GitHub, and Entra ID validates it against a trust relationship. Nothing to store, rotate, or leak.
+Required repository configuration:
 
-One battle scar worth documenting: **GitHub changed its default OIDC subject format for repositories created after July 15, 2026**. New repos emit immutable subjects that embed owner and repository IDs (`repo:owner@123/repo@456:ref:…`) instead of the historical name-based format. The Azure portal's guided "GitHub Actions" federated-credential scenario still generates the name-based subject, so the trust never matches and every login fails with `AADSTS700213`.
-
-The fix: create federated credentials with the **Other issuer** scenario and the exact immutable subject from the token. Two credentials exist:
-
-| Credential | Subject | Used by |
+| Type | Name | Purpose |
 |---|---|---|
-| `github-main-immutable` | `repo:<owner>@<id>/<repo>@<id>:ref:refs/heads/main` | push to `main` (apply) |
-| `github-pull-request-immutable` | `repo:<owner>@<id>/<repo>@<id>:pull_request` | pull requests (plan) |
+| Secret | `AZURE_CLIENT_ID` | Entra application (client) ID |
+| Secret | `AZURE_TENANT_ID` | Entra tenant ID |
+| Secret | `AZURE_SUBSCRIPTION_ID` | Target subscription |
+| Variable | `TFSTATE_RESOURCE_GROUP` | State backend resource group |
+| Variable | `TFSTATE_STORAGE_ACCOUNT` | State backend storage account |
 
-The security rationale behind the format change is sound — name-based subjects are vulnerable to *subject recycling*, where an abandoned org/repo name is re-registered by someone else who can then mint matching tokens against your cloud trust.
-
-### 3. Least privilege, enforced by architecture
-
-The CI identity holds exactly two permissions:
-
-- `Contributor` on `rg-portfolio-dev` — it can deploy workloads there and nowhere else.
-- `Storage Blob Data Contributor` on the state storage account — data plane only.
-
-This is why the code is split in two layers. The **bootstrap** layer (resource groups, state backend, budgets, role assignments) requires Owner rights and is applied by a human, once. The **foundation** layer runs in CI and *cannot* escalate: it consumes resource groups as data sources and only manages resources inside them. The permission boundary is structural, not a convention.
-
-### 4. Hardened state backend
-
-Terraform state is the most sensitive artifact in any IaC setup. The backend storage account is configured with:
-
-- **Shared access keys disabled** — all access (human and CI) goes through Entra ID with RBAC, `use_azuread_auth = true` in the backend config.
-- **Blob versioning + 14-day soft delete** — point-in-time recovery from a corrupted or mistakenly overwritten state.
-- **No public access, TLS 1.2 minimum.**
-
-Disabling shared keys has a provider-side consequence — see lessons learned below.
-
-### 5. CI pipeline with guardrails
-
-The workflow (`.github/workflows/infra.yml`) plans on pull requests and applies on merge to `main`, with:
-
-- **Concurrency group with `cancel-in-progress: false`** — Terraform runs queue instead of being cancelled mid-apply, avoiding orphaned state locks and half-created resources.
-- **`-lock-timeout=5m`** — a CI run waits politely if a local run holds the state lock.
-- **Pinned Terraform version** — reproducible runs; upgrades are deliberate commits.
-- **Path filters** — the pipeline only triggers on changes to `infra/foundation/**` or the workflow itself.
-
-The apply step is gated on `github.ref == 'refs/heads/main'`; pull request refs (`refs/pull/N/merge`) can never apply.
-
-### 6. Cost guardrails as code
-
-A subscription-level monthly budget with alerts at 50/80/100% actual spend plus a forecasted-overrun alert is part of the bootstrap layer. Workload resources default to the cheapest sensible SKUs (LRS, Cool tier). The bill is an architectural constraint, not an afterthought.
-
-## Lessons learned (battle scars)
-
-Real issues hit during the first deployment, kept here because they will bite others:
-
-1. **Immutable OIDC subjects (`AADSTS700213`)** — see design decision 2. If your repo was created after July 15, 2026, the portal's guided scenario produces a credential that will never match.
-2. **`shared_access_key_enabled = false` breaks the azurerm provider's defaults.** The provider validates storage data planes using shared keys unless told otherwise, so creating the hardened account failed with `403 KeyBasedAuthenticationNotPermitted`. Fix, in the bootstrap provider block: `storage_use_azuread = true` plus `features { storage { data_plane_available = false } }`. The second setting also sidesteps a bootstrap ordering problem: the human operator's data-plane role assignment is created *after* the account, so post-create data-plane polling would 403 anyway.
-3. **Recreating a storage account under the same name races DNS.** A destroy/recreate cycle hit a transient `404` while the provider read back properties of the fresh account — the endpoint's DNS was still propagating. The resource was fine; `terraform untaint` + a follow-up `apply` reconciled cleanly. Patience beats panic.
-4. **`vars.` vs `secrets.` in GitHub Actions fail silently.** Referencing an undefined repository *variable* interpolates an empty string — the init failed with `accountName cannot be an empty string`, not with a helpful "variable not found". The `TFSTATE_*` values live in the **Variables** tab; only the `AZURE_*` IDs are stored as secrets (and even those are identifiers, not credentials).
-5. **Shell dialects matter.** The import one-liners below exist in bash and PowerShell variants for a reason.
-
-## Repository layout
-
-```
-.
-├── .github/workflows/infra.yml       # CI: init → fmt → validate → plan → apply
-├── infra/
-│   ├── bootstrap/                    # human-applied: state backend, budget, RBAC
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   └── terraform.tfvars.example
-│   └── foundation/                   # CI-applied: workloads in rg-portfolio-dev
-│       ├── providers.tf              # partial azurerm backend
-│       └── main.tf
-└── .gitignore
-```
-
-## Getting started
-
-Prerequisites: Terraform ≥ 1.9, Azure CLI, an Azure subscription, and the one-time manual identity setup (verified custom domain, admin user, app registration with the two OIDC federated credentials — see design decisions above for why the CI identity is not self-provisioned: the identity that runs Terraform cannot create itself).
-
-### Bootstrap (once, locally)
-
-Authenticate interactively — username/password on the CLI is not compatible with enforced MFA:
+## Bootstrap (manual, one-time)
 
 ```bash
-az login   # opens the browser; use --use-device-code on headless shells
-```
-
-```bash
-# bash
-cd infra/bootstrap
-cp terraform.tfvars.example terraform.tfvars   # fill in your values
+cd bootstrap
+cp terraform.tfvars.example terraform.tfvars   # fill in values
 terraform init
-
-ASSIGNMENT_ID=$(az role assignment list \
-  --resource-group rg-portfolio-dev \
-  --query "[?roleDefinitionName=='Contributor' && principalType=='ServicePrincipal'].id | [0]" -o tsv)
-terraform import azurerm_role_assignment.ci_workload_contributor "$ASSIGNMENT_ID"
-
 terraform apply
 ```
 
-```powershell
-# PowerShell
-cd infra/bootstrap
-Copy-Item terraform.tfvars.example terraform.tfvars   # fill in your values
-terraform init
+Outputs from this apply feed the `TFSTATE_*` repository variables above.
 
-$ASSIGNMENT_ID = az role assignment list --resource-group rg-portfolio-dev --query "[?roleDefinitionName=='Contributor' && principalType=='ServicePrincipal'].id | [0]" -o tsv
-terraform import azurerm_role_assignment.ci_workload_contributor $ASSIGNMENT_ID
+## Conventions
 
-terraform apply
-```
-
-The apply also executes an `import` block that adopts the manually created `rg-portfolio-dev`, bringing the full foundation under code management. Note the `foundation_backend_config` output — you'll need the storage account name next.
-
-### Wire up CI
-
-In the GitHub repository, create:
-
-- **Secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
-- **Variables** (the Variables tab, not Secrets): `TFSTATE_RESOURCE_GROUP`, `TFSTATE_STORAGE_ACCOUNT` (from the bootstrap output)
-
-Open a pull request touching `infra/foundation/**` and the pipeline plans; merge it and the pipeline applies. No credentials stored anywhere.
-
-### Local foundation runs (optional)
-
-```bash
-cd infra/foundation
-terraform init -backend-config=backend.hcl   # paste the bootstrap output into backend.hcl
-terraform plan
-```
-
-## Security note on public contributions
-
-Plans run on pull requests, and a plan executes data sources and reads state. For a personal repository this is fine; if this repo ever accepts external contributions, gate fork-triggered runs (GitHub already requires approval for first-time contributors by default) or move plans behind a GitHub Environment with required reviewers.
-
-## Roadmap
-
-- **Environments** — promote the layout to `dev`/`prd` with separate state keys and GitHub environment protection rules.
-- **PR plan feedback** — post the plan output as a PR comment for review ergonomics.
-- **First workloads** — an event-driven data pipeline (Airflow + messaging) and a parametrizable BPMN decision engine, drawing on my background in fintech backends and data engineering.
-
----
-
-*Built by [Marcio Mastrocola Alcantara](https://www.linkedin.com/in/marcio-mastrocola) — Software Architect & Tech Lead. This repository doubles as documentation of how I approach greenfield cloud foundations — including the parts that didn't work on the first try.*
+- `.terraform.lock.hcl` is committed in every root module — CI and local runs use identical provider versions
+- Terraform `1.9.8`, pinned in the workflow
+- Architecture rationale lives in [docs](https://github.com/mastrocola-dev/docs); this README covers operation only
