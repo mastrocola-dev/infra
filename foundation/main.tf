@@ -11,9 +11,6 @@ data "azurerm_resource_group" "portfolio_dev" {
   name = "rg-portfolio-dev"
 }
 
-# First managed workload resource: a general-purpose storage account
-# for project artifacts (and a future static site). Cheap by design:
-# LRS + Cool tier keeps idle cost near zero.
 resource "random_string" "artifacts_suffix" {
   length  = 6
   lower   = true
