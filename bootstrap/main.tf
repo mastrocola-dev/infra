@@ -1,12 +1,3 @@
-# ------------------------------------------------------------------
-# Bootstrap layer — run ONCE, locally, authenticated as a human Owner
-# (az login with marcio@mastrocola.dev).
-#
-# Solves the chicken-and-egg problem: the remote state backend cannot
-# provision itself, and the CI identity must not have the privileges
-# required to create it. State for this layer is intentionally local.
-# ------------------------------------------------------------------
-
 terraform {
   required_version = ">= 1.9"
 
@@ -33,7 +24,7 @@ provider "azurerm" {
     }
   }
   storage_use_azuread = true
-  subscription_id = var.subscription_id 
+  subscription_id     = var.subscription_id
 }
 
 data "azurerm_client_config" "current" {}
@@ -42,19 +33,10 @@ data "azuread_service_principal" "github_actions" {
   display_name = var.github_app_display_name
 }
 
-# ------------------------------------------------------------------
-# Resource groups
-# ------------------------------------------------------------------
-
 resource "azurerm_resource_group" "tfstate" {
   name     = "rg-tfstate"
   location = var.location
   tags     = local.tags
-}
-
-import {
-  to = azurerm_resource_group.portfolio_dev
-  id = "/subscriptions/${var.subscription_id}/resourceGroups/rg-portfolio-dev"
 }
 
 resource "azurerm_resource_group" "portfolio_dev" {
@@ -62,10 +44,6 @@ resource "azurerm_resource_group" "portfolio_dev" {
   location = var.location
   tags     = local.tags
 }
-
-# ------------------------------------------------------------------
-# Remote state backend
-# ------------------------------------------------------------------
 
 resource "random_string" "state_suffix" {
   length  = 6
@@ -75,11 +53,12 @@ resource "random_string" "state_suffix" {
 }
 
 resource "azurerm_storage_account" "tfstate" {
-  name                            = "sttfstate${random_string.state_suffix.result}"
-  resource_group_name             = azurerm_resource_group.tfstate.name
-  location                        = azurerm_resource_group.tfstate.location
-  account_tier                    = "Standard"
-  account_replication_type        = "LRS"
+  name                     = "sttfstate${random_string.state_suffix.result}"
+  resource_group_name      = azurerm_resource_group.tfstate.name
+  location                 = azurerm_resource_group.tfstate.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+
   shared_access_key_enabled       = false
   allow_nested_items_to_be_public = false
   min_tls_version                 = "TLS1_2"
@@ -100,10 +79,6 @@ resource "azurerm_storage_container" "tfstate" {
   storage_account_id = azurerm_storage_account.tfstate.id
 }
 
-# ------------------------------------------------------------------
-# RBAC — least privilege, data plane only where possible
-# ------------------------------------------------------------------
-
 resource "azurerm_role_assignment" "ci_state_blob" {
   scope                = azurerm_storage_account.tfstate.id
   role_definition_name = "Storage Blob Data Contributor"
@@ -121,10 +96,6 @@ resource "azurerm_role_assignment" "ci_workload_contributor" {
   role_definition_name = "Contributor"
   principal_id         = data.azuread_service_principal.github_actions.object_id
 }
-
-# ------------------------------------------------------------------
-# Cost guardrail
-# ------------------------------------------------------------------
 
 resource "azurerm_consumption_budget_subscription" "monthly" {
   name            = "budget-monthly"
@@ -157,7 +128,7 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
 
 locals {
   tags = {
-    project     = "portfolio"
+    project     = "mastrocola-dev"
     environment = "dev"
     managed_by  = "terraform"
     layer       = "bootstrap"

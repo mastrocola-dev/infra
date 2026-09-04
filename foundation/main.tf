@@ -1,12 +1,3 @@
-# ------------------------------------------------------------------
-# Foundation layer — applied by CI (GitHub Actions, OIDC, no secrets).
-#
-# The CI identity holds Contributor on rg-portfolio-dev only, so this
-# layer references resource groups as data sources and never attempts
-# subscription-level changes. Anything requiring elevated rights lives
-# in infra/bootstrap and is applied by a human.
-# ------------------------------------------------------------------
-
 data "azurerm_resource_group" "portfolio_dev" {
   name = "rg-portfolio-dev"
 }
@@ -35,14 +26,9 @@ resource "azurerm_storage_account" "artifacts" {
 
 locals {
   tags = {
-    project     = "portfolio"
+    project     = "mastrocola-dev"
     environment = "dev"
     managed_by  = "terraform"
     layer       = "foundation"
   }
-}
-
-output "artifacts_storage_account" {
-  description = "Storage account provisioned by the CI pipeline."
-  value       = azurerm_storage_account.artifacts.name
 }
