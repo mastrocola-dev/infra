@@ -1,3 +1,3 @@
-output "default_host_name" {
-  value = azurerm_static_web_app.www.default_host_name
+output "artifacts_storage_account" {
+  value = azurerm_storage_account.artifacts.name
 }
