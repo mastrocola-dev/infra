@@ -45,6 +45,28 @@ resource "azurerm_resource_group" "portfolio_dev" {
   tags     = local.tags
 }
 
+resource "azurerm_role_definition" "web_async_reader" {
+  name        = "Web Async Operation Reader"
+  scope       = "/subscriptions/${var.subscription_id}"
+  description = "Read-only access to Microsoft.Web async operation status endpoints"
+
+  permissions {
+    actions = [
+      "Microsoft.Web/locations/staticSitesOperationStatuses/read",
+      "Microsoft.Web/locations/operations/read",
+      "Microsoft.Web/locations/operationResults/read",
+    ]
+  }
+
+  assignable_scopes = ["/subscriptions/${var.subscription_id}"]
+}
+
+resource "azurerm_role_assignment" "ci_web_async_reader" {
+  scope              = "/subscriptions/${var.subscription_id}"
+  role_definition_id = azurerm_role_definition.web_async_reader.role_definition_resource_id
+  principal_id       = data.azuread_service_principal.github_actions.object_id
+}
+
 resource "random_string" "state_suffix" {
   length  = 6
   lower   = true
