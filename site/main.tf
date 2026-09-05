@@ -22,6 +22,8 @@ resource "azurerm_static_web_app_custom_domain" "www" {
   static_web_app_id = azurerm_static_web_app.www.id
   domain_name       = "www.${var.domain}"
   validation_type   = "cname-delegation"
+
+  depends_on = [cloudflare_dns_record.www]
 }
 
 resource "cloudflare_dns_record" "apex" {
