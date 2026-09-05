@@ -18,6 +18,12 @@ resource "azurerm_static_web_app_custom_domain" "apex" {
   validation_type   = "dns-txt-token"
 }
 
+resource "azurerm_static_web_app_custom_domain" "www" {
+  static_web_app_id = azurerm_static_web_app.www.id
+  domain_name       = "www.${var.domain}"
+  validation_type   = "cname-delegation"
+}
+
 resource "cloudflare_dns_record" "apex_validation" {
   zone_id = var.cloudflare_zone_id
   name    = var.domain
@@ -29,6 +35,15 @@ resource "cloudflare_dns_record" "apex_validation" {
 resource "cloudflare_dns_record" "apex" {
   zone_id = var.cloudflare_zone_id
   name    = var.domain
+  type    = "CNAME"
+  content = azurerm_static_web_app.www.default_host_name
+  proxied = false
+  ttl     = 1
+}
+
+resource "cloudflare_dns_record" "www" {
+  zone_id = var.cloudflare_zone_id
+  name    = "www.${var.domain}"
   type    = "CNAME"
   content = azurerm_static_web_app.www.default_host_name
   proxied = false
