@@ -24,14 +24,6 @@ resource "azurerm_static_web_app_custom_domain" "www" {
   validation_type   = "cname-delegation"
 }
 
-resource "cloudflare_dns_record" "apex_validation" {
-  zone_id = var.cloudflare_zone_id
-  name    = var.domain
-  type    = "TXT"
-  content = azurerm_static_web_app_custom_domain.apex.validation_token
-  ttl     = 1
-}
-
 resource "cloudflare_dns_record" "apex" {
   zone_id = var.cloudflare_zone_id
   name    = var.domain
