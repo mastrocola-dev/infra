@@ -54,9 +54,7 @@ resource "azurerm_role_definition" "web_async_reader" {
 
   permissions {
     actions = [
-      "Microsoft.Web/locations/staticSitesOperationStatuses/read",
-      "Microsoft.Web/locations/operations/read",
-      "Microsoft.Web/locations/operationResults/read",
+      "Microsoft.Web/locations/*/read",
     ]
   }
 
