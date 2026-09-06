@@ -15,6 +15,10 @@ resource "azurerm_static_web_app" "www" {
   sku_size            = "Free"
 
   tags = local.tags
+
+  lifecycle {
+    ignore_changes = [repository_url, repository_branch]
+  }
 }
 
 resource "azurerm_static_web_app_custom_domain" "apex" {
@@ -29,6 +33,10 @@ resource "azurerm_static_web_app_custom_domain" "www" {
   validation_type   = "cname-delegation"
 
   depends_on = [cloudflare_dns_record.www]
+
+  lifecycle {
+    ignore_changes = [validation_type]
+  }
 }
 
 resource "cloudflare_dns_record" "apex" {
