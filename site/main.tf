@@ -2,11 +2,6 @@ data "azurerm_resource_group" "portfolio_dev" {
   name = "rg-portfolio-dev"
 }
 
-import {
-  to = azurerm_static_web_app_custom_domain.www
-  id = "${azurerm_static_web_app.www.id}/customDomains/www.${var.domain}"
-}
-
 resource "azurerm_static_web_app" "www" {
   name                = "stapp-portfolio-www"
   resource_group_name = data.azurerm_resource_group.portfolio_dev.name
