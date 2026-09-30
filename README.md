@@ -12,7 +12,7 @@ site/          Public site hosting and DNS — applied via CI
 
 The split follows the privilege boundary, not just the chicken-and-egg problem:
 
-- `bootstrap` is applied once, locally, by a human Owner (`az login`). It creates the state backend — which cannot provision itself — and everything requiring elevated rights: resource groups, RBAC assignments, subscription budget. Its own state is intentionally local.
+- `bootstrap` is applied once, locally, by a human Owner (`az login`). It creates the state backend — which cannot provision itself — and everything requiring elevated rights: resource groups, RBAC assignments, subscription budget. It has no apply pipeline.
 - `foundation` is applied by CI. The CI identity holds Contributor on `rg-portfolio-dev` only, so this layer references resource groups as data sources and never attempts subscription-level changes.
 - `site` is applied by CI under the same identity. It declares the Static Web App serving [mastrocola.dev](https://mastrocola.dev) and the Cloudflare DNS records pointing at it (see [ADR-002](https://github.com/mastrocola-dev/docs/blob/main/adr/002-public-site-hosting.md)). Site content lives in the [www](https://github.com/mastrocola-dev/www) repository and is deployed by its own pipeline.
 
@@ -25,9 +25,11 @@ One workflow per root module, same shape, separate state keys and concurrency gr
 | [`infra.yml`](.github/workflows/infra.yml) | `foundation/**` | `foundation.tfstate` |
 | [`site.yml`](.github/workflows/site.yml) | `site/**` | `site.tfstate` |
 
+[`terraform-check.yml`](.github/workflows/terraform-check.yml) runs `fmt -check` from the root and `validate` in every root module — `bootstrap` included — on any `.tf` change. It needs no state and no credentials (`init -backend=false`, `contents: read`), so it is the only gate that covers `bootstrap`.
+
 | Trigger | Behavior |
 |---|---|
-| Pull request to `main` | `fmt` check, `validate`, `plan` |
+| Pull request to `main` | `terraform-check`, `plan` |
 | Push to `main` | plan + `apply` |
 | Manual dispatch | plan, with optional apply (`apply: true`) |
 
@@ -79,7 +81,7 @@ The privilege boundary is unchanged by where state lives: bootstrap is applied e
  
 Outputs from this module feed the `TFSTATE_*` repository variables above. Resources that predated this code were adopted into state via one-shot `import` blocks, removed once consumed.
  
-Because bootstrap sits outside CI, nothing validates it on push — run `terraform fmt -recursive` and `terraform validate` locally before committing, and read plans with extra care.
+Bootstrap is validated by `terraform-check` but never planned or applied by CI — read its plans with extra care.
 
 ## Conventions
 

@@ -1,0 +1,54 @@
+name: terraform-check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.tf"
+      - "**/.terraform.lock.hcl"
+      - ".github/workflows/terraform-check.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.tf"
+      - "**/.terraform.lock.hcl"
+      - ".github/workflows/terraform-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [bootstrap, foundation, site]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform init
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        run: terraform validate
