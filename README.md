@@ -5,14 +5,14 @@ Azure infrastructure for [mastrocola.dev](https://github.com/mastrocola-dev), ma
 ## Structure
 
 ```
-bootstrap/     Terraform state backend, identities, cost guardrails — applied manually
+bootstrap/     State backend, identities, Key Vault, role assignments, cost guardrails — applied manually
 foundation/    Core platform resources — applied via CI
 site/          Public site hosting and DNS — applied via CI
 ```
 
 The split follows the privilege boundary, not just the chicken-and-egg problem:
 
-- `bootstrap` is applied once, locally, by a human Owner (`az login`). It creates the state backend — which cannot provision itself — and everything requiring elevated rights: resource groups, RBAC assignments, subscription budget. It has no apply pipeline.
+- `bootstrap` is applied once, locally, by a human Owner (`az login`). It creates the state backend — which cannot provision itself — and everything requiring elevated rights: resource groups, identities, Key Vault, every role assignment, subscription budget. It has no apply pipeline.
 - `foundation` is applied by CI. The CI identity holds Contributor on `rg-portfolio-dev` only, so this layer references resource groups as data sources and never attempts subscription-level changes.
 - `site` is applied by CI under the same identity. It declares the Static Web App serving [mastrocola.dev](https://mastrocola.dev) and the Cloudflare DNS records pointing at it (see [ADR-002](https://github.com/mastrocola-dev/docs/blob/main/adr/002-public-site-hosting.md)). Site content lives in the [www](https://github.com/mastrocola-dev/www) repository and is deployed by its own pipeline.
 
@@ -35,7 +35,7 @@ One workflow per root module, same shape, separate state keys and concurrency gr
 
 ## Authentication
 
-The pipelines authenticate to Azure via OIDC federation — no stored credentials. The Entra application trusts GitHub's immutable subject format (`repo:owner@id/repo@id:...`), with one federated credential for `main` and one for pull requests. Storage access uses Entra ID tokens exclusively (`storage_use_azuread`); shared account keys are disabled everywhere.
+The pipelines authenticate to Azure via OIDC federation as their repository's own managed identity — see [Identities and secrets](#identities-and-secrets). Storage access uses Entra ID tokens exclusively (`storage_use_azuread`); shared account keys are disabled everywhere.
 
 The `site` module additionally authenticates to Cloudflare with an API token scoped to DNS edit on the `mastrocola.dev` zone only — an accepted static secret (ADR-002).
 
@@ -60,6 +60,25 @@ Required repository configuration:
 - The CI identity holds a custom subscription-scope role (`Web Async Operation Reader`, defined in bootstrap) because Static Web Apps mutations report async status at subscription scope, outside the resource-group Contributor boundary.
 - The deployment token consumed by the `www` pipeline is retrieved with `az staticwebapp secrets list --name stapp-portfolio-www` and stored as a secret in that repository. It can only publish static content.
 
+## Identities and secrets
+
+Every pipeline authenticates as its repository's own user-assigned managed identity, federated with GitHub's immutable subject format (`repo:owner@id/repo@id:...`) ([ADR-006](https://github.com/mastrocola-dev/docs/blob/main/adr/006-identity-and-secrets.md)). Identities, federated credentials, the Key Vault and every role assignment live in bootstrap, inside `rg-identity` — a resource group the CI identity has no role on. Contributor over an identity could federate it to any subject; Contributor over the vault could change its permission model.
+
+| Identity | Federated subjects | Grants |
+|---|---|---|
+| `id-infra` | `main`, `pull_request` | Contributor on `rg-portfolio-dev`, state blob, `Web Async Operation Reader`, `cloudflare-api-token`, vault metadata |
+| `id-www` | `main`, `pull_request` | `Static Web App Secrets Reader` (custom: list deployment tokens) on `rg-portfolio-dev` |
+| `id-docs` | `pull_request` | `anthropic-api-key-ci` |
+
+Secrets are declared with a write-only placeholder (`value_wo`, never stored in state) so each role can be scoped to a single secret. Real values are written out of band, always with an expiry:
+
+```bash
+read -rs VALUE && az keyvault secret set --vault-name kv-mastrocola-dev --name <secret> --value "$VALUE" \
+  --expires "$(date -u -d '+180 days' +%Y-%m-%dT%H:%M:%SZ)" --query attributes.expires -o tsv
+```
+
+`expiration_date` is excluded from reconciliation: rotation writes it. The operator holds `Key Vault Secrets Officer` on the vault; a 90-second `time_sleep` lets that assignment propagate before the placeholders are written. Azure rejects concurrent federated credential writes on one identity (409 Conflict); when adding several at once, apply with `-parallelism=1`.
+
 ## Bootstrap (manual, applied by a human Owner)
  
 ```bash
@@ -79,7 +98,7 @@ Bootstrap state lives in the same remote backend as everything else (`bootstrap.
  
 The privilege boundary is unchanged by where state lives: bootstrap is applied exclusively by a human Owner via `az login`, never by CI. Authentication to the state blob uses the operator's Entra identity.
  
-Outputs from this module feed the `TFSTATE_*` repository variables above. Resources that predated this code were adopted into state via one-shot `import` blocks, removed once consumed.
+Requires Terraform `>= 1.11` (write-only arguments). Outputs feed the `TFSTATE_*`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `KEY_VAULT_NAME` repository variables. Resources that predated this code were adopted into state via one-shot `import` blocks, removed once consumed.
  
 Bootstrap is validated by `terraform-check` but never planned or applied by CI — read its plans with extra care.
 

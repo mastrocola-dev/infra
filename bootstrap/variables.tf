@@ -9,12 +9,6 @@ variable "location" {
   default     = "eastus"
 }
 
-variable "github_app_display_name" {
-  description = "Display name of the Entra app registration used by GitHub Actions."
-  type        = string
-  default     = "github-actions-portfolio"
-}
-
 variable "notification_email" {
   description = "Email address that receives budget alerts."
   type        = string

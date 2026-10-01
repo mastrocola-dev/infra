@@ -1,18 +1,18 @@
 terraform {
-  required_version = ">= 1.9"
+  required_version = ">= 1.11"
 
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
-    azuread = {
-      source  = "hashicorp/azuread"
-      version = "~> 3.0"
-    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.13"
     }
   }
 
@@ -30,10 +30,6 @@ provider "azurerm" {
 }
 
 data "azurerm_client_config" "current" {}
-
-data "azuread_service_principal" "github_actions" {
-  display_name = var.github_app_display_name
-}
 
 resource "azurerm_resource_group" "tfstate" {
   name     = "rg-tfstate"
@@ -64,7 +60,8 @@ resource "azurerm_role_definition" "web_async_reader" {
 resource "azurerm_role_assignment" "ci_web_async_reader" {
   scope              = "/subscriptions/${var.subscription_id}"
   role_definition_id = azurerm_role_definition.web_async_reader.role_definition_resource_id
-  principal_id       = data.azuread_service_principal.github_actions.object_id
+  principal_id       = azurerm_user_assigned_identity.ci["infra"].principal_id
+  principal_type     = "ServicePrincipal"
 }
 
 resource "random_string" "state_suffix" {
@@ -104,7 +101,8 @@ resource "azurerm_storage_container" "tfstate" {
 resource "azurerm_role_assignment" "ci_state_blob" {
   scope                = azurerm_storage_account.tfstate.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = data.azuread_service_principal.github_actions.object_id
+  principal_id         = azurerm_user_assigned_identity.ci["infra"].principal_id
+  principal_type       = "ServicePrincipal"
 }
 
 resource "azurerm_role_assignment" "operator_state_blob" {
@@ -116,7 +114,8 @@ resource "azurerm_role_assignment" "operator_state_blob" {
 resource "azurerm_role_assignment" "ci_workload_contributor" {
   scope                = azurerm_resource_group.portfolio_dev.id
   role_definition_name = "Contributor"
-  principal_id         = data.azuread_service_principal.github_actions.object_id
+  principal_id         = azurerm_user_assigned_identity.ci["infra"].principal_id
+  principal_type       = "ServicePrincipal"
 }
 
 resource "azurerm_consumption_budget_subscription" "monthly" {
