@@ -77,7 +77,7 @@ read -rs VALUE && az keyvault secret set --vault-name kv-mastrocola-dev --name <
   --expires "$(date -u -d '+180 days' +%Y-%m-%dT%H:%M:%SZ)" --query attributes.expires -o tsv
 ```
 
-`expiration_date` is excluded from reconciliation: rotation writes it. The operator holds `Key Vault Secrets Officer` on the vault; a 90-second `time_sleep` lets that assignment propagate before the placeholders are written.
+`expiration_date` is excluded from reconciliation: rotation writes it. The operator holds `Key Vault Secrets Officer` on the vault; a 90-second `time_sleep` lets that assignment propagate before the placeholders are written. Azure rejects concurrent federated credential writes on one identity (409 Conflict); when adding several at once, apply with `-parallelism=1`.
 
 ## Bootstrap (manual, applied by a human Owner)
  
