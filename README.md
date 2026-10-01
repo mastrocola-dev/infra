@@ -25,6 +25,8 @@ One workflow per root module, same shape, separate state keys and concurrency gr
 | [`infra.yml`](.github/workflows/infra.yml) | `foundation/**` | `foundation.tfstate` |
 | [`site.yml`](.github/workflows/site.yml) | `site/**` | `site.tfstate` |
 
+[`secret-expiry.yml`](.github/workflows/secret-expiry.yml) runs weekly and on demand: it reads secret metadata (never values) and fails when any secret has no expiry or expires within 30 days — the failure notification is the rotation reminder. GitHub disables scheduled workflows after 60 days without repository activity and emails a warning first; re-enable it from the Actions tab.
+
 [`terraform-check.yml`](.github/workflows/terraform-check.yml) runs `fmt -check` from the root and `validate` in every root module — `bootstrap` included — on any `.tf` change. It needs no state and no credentials (`init -backend=false`, `contents: read`), so it is the only gate that covers `bootstrap`.
 
 | Trigger | Behavior |
@@ -37,16 +39,16 @@ One workflow per root module, same shape, separate state keys and concurrency gr
 
 The pipelines authenticate to Azure via OIDC federation as their repository's own managed identity — see [Identities and secrets](#identities-and-secrets). Storage access uses Entra ID tokens exclusively (`storage_use_azuread`); shared account keys are disabled everywhere.
 
-The `site` module additionally authenticates to Cloudflare with an API token scoped to DNS edit on the `mastrocola.dev` zone only — an accepted static secret (ADR-002).
+The `site` module additionally authenticates to Cloudflare with an API token scoped to DNS edit on the `mastrocola.dev` zone only. The pipeline reads it from Key Vault at run time; GitHub stores no secrets.
 
 Required repository configuration:
 
 | Type | Name | Purpose |
 |---|---|---|
-| Secret | `AZURE_CLIENT_ID` | Entra application (client) ID |
-| Secret | `AZURE_TENANT_ID` | Entra tenant ID |
-| Secret | `AZURE_SUBSCRIPTION_ID` | Target subscription |
-| Secret | `CLOUDFLARE_API_TOKEN` | DNS edit on the site zone (site module only) |
+| Variable | `AZURE_CLIENT_ID` | Client ID of `id-infra` (bootstrap output `ci_client_ids`) |
+| Variable | `AZURE_TENANT_ID` | Entra tenant ID |
+| Variable | `AZURE_SUBSCRIPTION_ID` | Target subscription |
+| Variable | `KEY_VAULT_NAME` | Vault holding `cloudflare-api-token` |
 | Variable | `TFSTATE_RESOURCE_GROUP` | State backend resource group |
 | Variable | `TFSTATE_STORAGE_ACCOUNT` | State backend storage account |
 | Variable | `CLOUDFLARE_ZONE_ID` | Zone holding the site records |
@@ -58,7 +60,7 @@ Required repository configuration:
 - The apex validates by TXT token (one-shot, removed after validation); the www subdomain validates by CNAME delegation, which requires the record to exist first — hence the explicit `depends_on`. Patterns and failure modes: [static-web-apps runbook](https://github.com/mastrocola-dev/docs/blob/main/runbooks/static-web-apps.md).
 - `repository_url`/`repository_branch` on the app and `validation_type` on the www domain are excluded from reconciliation: the first pair is written by the `www` content pipeline on every deploy, the last is not returned by the Azure API and would force replacement of imported domains.
 - The CI identity holds a custom subscription-scope role (`Web Async Operation Reader`, defined in bootstrap) because Static Web Apps mutations report async status at subscription scope, outside the resource-group Contributor boundary.
-- The deployment token consumed by the `www` pipeline is retrieved with `az staticwebapp secrets list --name stapp-portfolio-www` and stored as a secret in that repository. It can only publish static content.
+- The `www` pipeline fetches the deployment token at deploy time (`az staticwebapp secrets list`) as `id-www`; no copy is stored. Resetting it (`az staticwebapp secrets reset-api-key`) needs no change anywhere else.
 
 ## Identities and secrets
 
