@@ -87,7 +87,7 @@ Bootstrap is validated by `terraform-check` but never planned or applied by CI �
 
 - No comments in code — rationale lives in this README, mechanics in the resource names
 - `.terraform.lock.hcl` is committed in every root module — CI and local runs use identical provider versions
-- Terraform `1.16.5`, pinned in every workflow
+- Terraform `1.16.4`, pinned in every workflow
 - `outputs.tf` is a separate file in every root module
 - Resource names retain the original `portfolio` prefix — renaming forces destroy/recreate; accepted as debt until a new environment supersedes them. Tags carry the current `mastrocola-dev` identity
 - Architecture rationale lives in [docs](https://github.com/mastrocola-dev/docs); this README covers operation only
