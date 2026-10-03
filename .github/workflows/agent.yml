@@ -79,3 +79,13 @@ jobs:
             -lock-timeout=5m \
             -auto-approve \
             tfplan
+
+      - name: Remove the host storage connection string the provider writes
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.apply)
+        run: |
+          set -euo pipefail
+          apps=$(az functionapp list --resource-group rg-portfolio-dev --query '[].name' --output tsv)
+          test -n "$apps"
+          for app in $apps; do
+            az functionapp config appsettings delete --resource-group rg-portfolio-dev --name "$app" --setting-names AzureWebJobsStorage --output none
+          done
