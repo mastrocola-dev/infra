@@ -68,11 +68,11 @@ Every pipeline authenticates as its repository's own user-assigned managed ident
 
 | Identity | Federated subjects | Grants |
 |---|---|---|
-| `id-infra` | `main`, `pull_request` | Contributor on `rg-portfolio-dev`, state blob, `Web Async Operation Reader`, `cloudflare-api-token`, vault metadata |
+| `id-infra` | `main`, `pull_request` | Contributor on `rg-portfolio-dev`, state blob, `Web Async Operation Reader`, `cloudflare-api-token`, vault metadata, `Managed Identity Operator` on each runtime identity |
 | `id-www` | `main`, `pull_request` | `Static Web App Secrets Reader` (custom: list deployment tokens) on `rg-portfolio-dev` |
 | `id-docs` | `pull_request` | `anthropic-api-key-ci` |
 
-The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/adr/007-agent-runtime.md)) adds one identity per function app. They are not federated: the platform attaches them to the apps.
+The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/adr/007-agent-runtime.md)) adds one identity per function app. They are not federated: the platform attaches them to the apps. `id-infra` holds `Managed Identity Operator` on each one, which lets the `agent` module read and attach it but not federate it or change its grants. Whoever controls that pipeline can therefore act as a runtime identity by attaching it to a resource of its own — the price of letting CI deploy the apps.
 
 | Identity | Attached to | Grants |
 |---|---|---|

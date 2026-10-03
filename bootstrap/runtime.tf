@@ -25,3 +25,11 @@ resource "azuread_application_identifier_uri" "mcp_docs" {
 resource "azuread_service_principal" "mcp_docs" {
   client_id = azuread_application_registration.mcp_docs.client_id
 }
+
+resource "azurerm_role_assignment" "ci_runtime_identity_operator" {
+  for_each             = azurerm_user_assigned_identity.runtime
+  scope                = each.value.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.ci["infra"].principal_id
+  principal_type       = "ServicePrincipal"
+}
