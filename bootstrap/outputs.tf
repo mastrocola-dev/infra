@@ -38,3 +38,18 @@ output "key_vault_name" {
   description = "Key Vault holding every secret, for the KEY_VAULT_NAME repository variable."
   value       = azurerm_key_vault.main.name
 }
+
+output "runtime_client_ids" {
+  description = "Client ID of each runtime identity."
+  value       = { for name, identity in azurerm_user_assigned_identity.runtime : name => identity.client_id }
+}
+
+output "mcp_docs_audience" {
+  description = "Token audience of mcp-docs, for the MCP_DOCS_AUDIENCE repository variable."
+  value       = azuread_application_identifier_uri.mcp_docs.identifier_uri
+}
+
+output "mcp_docs_client_id" {
+  description = "Client ID of the mcp-docs app registration, for the MCP_DOCS_CLIENT_ID repository variable."
+  value       = azuread_application_registration.mcp_docs.client_id
+}

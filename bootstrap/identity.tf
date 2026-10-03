@@ -14,6 +14,11 @@ locals {
     www-pr     = { repository = "www", ref = "pull_request" }
     docs-pr    = { repository = "docs", ref = "pull_request" }
   }
+
+  principals = merge(
+    { for name, identity in azurerm_user_assigned_identity.ci : name => identity.principal_id },
+    { for name, identity in azurerm_user_assigned_identity.runtime : "run-${name}" => identity.principal_id },
+  )
 }
 
 resource "azurerm_resource_group" "identity" {
