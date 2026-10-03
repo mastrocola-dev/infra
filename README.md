@@ -85,7 +85,8 @@ Every pipeline authenticates as its repository's own user-assigned managed ident
 |---|---|---|
 | `id-infra` | `main`, `pull_request` | Contributor on `rg-portfolio-dev`, state blob, `Web Async Operation Reader`, `cloudflare-api-token`, vault metadata, `Managed Identity Operator` on each runtime identity |
 | `id-www` | `main`, `pull_request` | `Static Web App Secrets Reader` (custom: list deployment tokens) on `rg-portfolio-dev` |
-| `id-docs` | `pull_request` | `anthropic-api-key-ci` |
+| `id-docs` | `main`, `pull_request` | `anthropic-api-key-ci`; deploys `mcp-docs` (`Website Contributor` on that app, `Reader` on its plan) |
+| `id-service-agent` | `main` | deploys `worker` (`Website Contributor` on that app, `Reader` on its plan) |
 
 The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/adr/007-agent-runtime.md)) adds one identity per function app. They are not federated: the platform attaches them to the apps. `id-infra` holds `Managed Identity Operator` on each one, which lets the `agent` module read and attach it but not federate it or change its grants. Whoever controls that pipeline can therefore act as a runtime identity by attaching it to a resource of its own — the price of letting CI deploy the apps.
 
@@ -96,6 +97,8 @@ The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/ad
 | `id-run-mcp-docs` | `mcp-docs` function app | blob owner on its storage account |
 
 Their grants on queues and storage are scoped to resources the `agent` module creates. Bootstrap reads that module's outputs from its state (`terraform_remote_state`, same backend) and builds each scope from them, so the names never appear here and a recreated module is followed by a bootstrap apply, not an edit. The order on a new environment is therefore bootstrap, `agent`, bootstrap again. Granting at resource-group scope instead would let the worker send and receive on every queue.
+
+Deploy rights are per app, never on the resource group. `Website Contributor` is the smallest built-in role that can publish code; it can also change the app's settings, which adds nothing to what a deployer already has, since deployed code runs as the app's identity. `Reader` on the plan only spares the Azure CLI a minute of retries. `mcp-docs` is deployed from `docs`, whose content it serves, so the `mcp-docs` repository has no identity at all.
 
 `mcp-docs` is also represented by an Entra app registration with no credentials (`azuread` provider). It only names the audience of the token `worker` presents; the application ID URI is `api://<client id>`. The operator needs permission to register applications in the tenant.
 
