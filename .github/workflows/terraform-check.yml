@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [bootstrap, foundation, site]
+        module: [bootstrap, foundation, site, agent]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
