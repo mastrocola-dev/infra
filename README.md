@@ -72,6 +72,18 @@ Every pipeline authenticates as its repository's own user-assigned managed ident
 | `id-www` | `main`, `pull_request` | `Static Web App Secrets Reader` (custom: list deployment tokens) on `rg-portfolio-dev` |
 | `id-docs` | `pull_request` | `anthropic-api-key-ci` |
 
+The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/adr/007-agent-runtime.md)) adds one identity per function app. They are not federated: the platform attaches them to the apps.
+
+| Identity | Attached to | Grants |
+|---|---|---|
+| `id-run-api` | `api` function app | `turnstile-secret-key` |
+| `id-run-worker` | `worker` function app | `anthropic-api-key-runtime` |
+| `id-run-mcp-docs` | `mcp-docs` function app | none yet |
+
+Their grants on queues, tables and storage are scoped to resources the `agent` module creates, so they are added to bootstrap in a second apply, after that module exists. Granting them at resource-group scope instead would let the worker send and receive on every queue.
+
+`mcp-docs` is also represented by an Entra app registration with no credentials (`azuread` provider). It only names the audience of the token `worker` presents; the application ID URI is `api://<client id>`. The operator needs permission to register applications in the tenant.
+
 Secrets are declared with a write-only placeholder (`value_wo`, never stored in state) so each role can be scoped to a single secret. Real values are written out of band, always with an expiry:
 
 ```bash
@@ -79,7 +91,9 @@ read -rs VALUE && az keyvault secret set --vault-name kv-mastrocola-dev --name <
   --expires "$(date -u -d '+180 days' +%Y-%m-%dT%H:%M:%SZ)" --query attributes.expires -o tsv
 ```
 
-`expiration_date` is excluded from reconciliation: rotation writes it. The operator holds `Key Vault Secrets Officer` on the vault; a 90-second `time_sleep` lets that assignment propagate before the placeholders are written. Azure rejects concurrent federated credential writes on one identity (409 Conflict); when adding several at once, apply with `-parallelism=1`.
+The Cloudflare origin certificate of `api.mastrocola.dev` follows the same idea. Bootstrap declares `origin-api` as a self-signed certificate generated inside the vault, only so that a role can be scoped to it; the real certificate is imported over it out of band and its private key never reaches Terraform (`certificate_policy` is excluded from reconciliation, since the import rewrites it). The App Service resource provider holds `Key Vault Certificate User` on that certificate and on the secret that backs it, nothing else in the vault. The operator holds `Key Vault Certificates Officer` to run the import.
+
+`expiration_date` and `tags` are excluded from reconciliation: rotation writes the first, and `az keyvault secret set` adds a `file-encoding` tag on every write. The operator holds `Key Vault Secrets Officer` on the vault; a 90-second `time_sleep` lets that assignment propagate before the placeholders are written. Azure rejects concurrent federated credential writes on one identity (409 Conflict); when adding several at once, apply with `-parallelism=1`.
 
 ## Bootstrap (manual, applied by a human Owner)
  
@@ -100,7 +114,7 @@ Bootstrap state lives in the same remote backend as everything else (`bootstrap.
  
 The privilege boundary is unchanged by where state lives: bootstrap is applied exclusively by a human Owner via `az login`, never by CI. Authentication to the state blob uses the operator's Entra identity.
  
-Requires Terraform `>= 1.11` (write-only arguments). Outputs feed the `TFSTATE_*`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `KEY_VAULT_NAME` repository variables. Resources that predated this code were adopted into state via one-shot `import` blocks, removed once consumed.
+Requires Terraform `>= 1.11` (write-only arguments). Outputs feed the `TFSTATE_*`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `KEY_VAULT_NAME`, `MCP_DOCS_AUDIENCE` and `MCP_DOCS_CLIENT_ID` repository variables. Resources that predated this code were adopted into state via one-shot `import` blocks, removed once consumed.
  
 Bootstrap is validated by `terraform-check` but never planned or applied by CI — read its plans with extra care.
 
