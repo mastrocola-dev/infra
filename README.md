@@ -8,12 +8,14 @@ Azure infrastructure for [mastrocola.dev](https://github.com/mastrocola-dev), ma
 bootstrap/     State backend, identities, Key Vault, role assignments, cost guardrails — applied manually
 foundation/    Core platform resources — applied via CI
 site/          Public site hosting and DNS — applied via CI
+agent/         Agent runtime: function apps, queues, storage, telemetry — applied via CI
 ```
 
 The split follows the privilege boundary, not just the chicken-and-egg problem:
 
 - `bootstrap` is applied once, locally, by a human Owner (`az login`). It creates the state backend — which cannot provision itself — and everything requiring elevated rights: resource groups, identities, Key Vault, every role assignment, subscription budget. It has no apply pipeline.
 - `foundation` is applied by CI. The CI identity holds Contributor on `rg-portfolio-dev` only, so this layer references resource groups as data sources and never attempts subscription-level changes.
+- `agent` is applied by CI under the same identity. It declares the runtime of [ADR-007](https://github.com/mastrocola-dev/docs/blob/main/adr/007-agent-runtime.md); see [Agent specifics](#agent-specifics).
 - `site` is applied by CI under the same identity. It declares the Static Web App serving [mastrocola.dev](https://mastrocola.dev) and the Cloudflare DNS records pointing at it (see [ADR-002](https://github.com/mastrocola-dev/docs/blob/main/adr/002-public-site-hosting.md)). Site content lives in the [www](https://github.com/mastrocola-dev/www) repository and is deployed by its own pipeline.
 
 ## Pipelines
@@ -24,6 +26,7 @@ One workflow per root module, same shape, separate state keys and concurrency gr
 |---|---|---|
 | [`infra.yml`](.github/workflows/infra.yml) | `foundation/**` | `foundation.tfstate` |
 | [`site.yml`](.github/workflows/site.yml) | `site/**` | `site.tfstate` |
+| [`agent.yml`](.github/workflows/agent.yml) | `agent/**` | `agent.tfstate` |
 
 [`secret-expiry.yml`](.github/workflows/secret-expiry.yml) runs weekly and on demand: it reads secret metadata (never values) and fails when any secret has no expiry or expires within 30 days — the failure notification is the rotation reminder. GitHub disables scheduled workflows after 60 days without repository activity and emails a warning first; re-enable it from the Actions tab.
 
@@ -52,6 +55,7 @@ Required repository configuration:
 | Variable | `TFSTATE_RESOURCE_GROUP` | State backend resource group |
 | Variable | `TFSTATE_STORAGE_ACCOUNT` | State backend storage account |
 | Variable | `CLOUDFLARE_ZONE_ID` | Zone holding the site records |
+| Variable | `MCP_DOCS_CLIENT_ID` | App registration that names the `mcp-docs` token audience (bootstrap output) |
 
 ## Site specifics
  
@@ -61,6 +65,17 @@ Required repository configuration:
 - `repository_url`/`repository_branch` on the app and `validation_type` on the www domain are excluded from reconciliation: the first pair is written by the `www` content pipeline on every deploy, the last is not returned by the Azure API and would force replacement of imported domains.
 - The CI identity holds a custom subscription-scope role (`Web Async Operation Reader`, defined in bootstrap) because Static Web Apps mutations report async status at subscription scope, outside the resource-group Contributor boundary.
 - The `www` pipeline fetches the deployment token at deploy time (`az staticwebapp secrets list`) as `id-www`; no copy is stored. Resetting it (`az staticwebapp secrets reset-api-key`) needs no change anywhere else.
+
+## Agent specifics
+
+- Three function apps on Flex Consumption (`api`, `worker`, `mcp-docs`), Node 24, 512 MB, at most two instances each: the ceiling on cost and on concurrent runs. A Flex Consumption plan hosts a single app, hence one plan per app.
+- One storage account per app. The Functions host needs account-wide blob access, so a shared account would let each app read the others' code packages and host keys. Shared keys are disabled; host and deployment storage authenticate as the app's identity (`AzureWebJobsStorage__*` settings and `storage_authentication_type`).
+- Each app runs as its user-assigned identity from bootstrap, read here as a data source. No app has a system-assigned identity and no setting holds a credential: `worker` reads the Anthropic key from Key Vault at run time, from the address in `ANTHROPIC_API_KEY_URI`.
+- Service Bus Basic with SAS authentication disabled. `jobs` dead-letters after two deliveries and drops messages older than ten minutes — a question nobody is waiting for is not worth answering. `events` keeps the default delivery count and one hour, so cost reports survive a short outage of `api`.
+- `mcp-docs` requires an Entra token (built-in authentication, no client secret): audience is its app registration, and the only accepted caller is the `worker` identity. It has no IP restriction because `worker` calls it from addresses that are not fixed.
+- App names carry a random suffix, so `worker` is given the `mcp-docs` address by construction (`func-mcp-docs-<suffix>.azurewebsites.net`) rather than by reference, which would be a cycle inside one resource.
+- One Application Insights component over a Log Analytics workspace capped at 1 GB a day.
+- The data-plane roles of the three identities (queues, storage) are assigned by bootstrap after this module's first apply, because their scopes are resources created here. Until then the apps exist but cannot start.
 
 ## Identities and secrets
 
