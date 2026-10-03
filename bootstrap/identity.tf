@@ -2,17 +2,20 @@ locals {
   github_owner = "mastrocola-dev@324597838"
 
   github_repository_ids = {
-    infra = 1355062376
-    www   = 1357772879
-    docs  = 1356325722
+    infra         = 1355062376
+    www           = 1357772879
+    docs          = 1356325722
+    service-agent = 1384462777
   }
 
   github_federations = {
-    infra-main = { repository = "infra", ref = "ref:refs/heads/main" }
-    infra-pr   = { repository = "infra", ref = "pull_request" }
-    www-main   = { repository = "www", ref = "ref:refs/heads/main" }
-    www-pr     = { repository = "www", ref = "pull_request" }
-    docs-pr    = { repository = "docs", ref = "pull_request" }
+    infra-main         = { repository = "infra", ref = "ref:refs/heads/main" }
+    infra-pr           = { repository = "infra", ref = "pull_request" }
+    www-main           = { repository = "www", ref = "ref:refs/heads/main" }
+    www-pr             = { repository = "www", ref = "pull_request" }
+    docs-main          = { repository = "docs", ref = "ref:refs/heads/main" }
+    docs-pr            = { repository = "docs", ref = "pull_request" }
+    service-agent-main = { repository = "service-agent", ref = "ref:refs/heads/main" }
   }
 
   principals = merge(

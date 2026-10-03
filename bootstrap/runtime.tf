@@ -69,3 +69,23 @@ resource "azurerm_role_assignment" "runtime" {
   principal_id         = azurerm_user_assigned_identity.runtime[each.value.identity].principal_id
   principal_type       = "ServicePrincipal"
 }
+
+locals {
+  deployers = {
+    service-agent = "worker"
+    docs          = "mcp-docs"
+  }
+
+  deploy_grants = merge(
+    { for repository, app in local.deployers : "${repository}-app" => { repository = repository, role = "Website Contributor", scope = "${azurerm_resource_group.portfolio_dev.id}/providers/Microsoft.Web/sites/${data.terraform_remote_state.agent.outputs.function_apps[app]}" } },
+    { for repository, app in local.deployers : "${repository}-plan" => { repository = repository, role = "Reader", scope = "${azurerm_resource_group.portfolio_dev.id}/providers/Microsoft.Web/serverFarms/asp-${app}" } },
+  )
+}
+
+resource "azurerm_role_assignment" "ci_deploy" {
+  for_each             = local.deploy_grants
+  scope                = each.value.scope
+  role_definition_name = each.value.role
+  principal_id         = azurerm_user_assigned_identity.ci[each.value.repository].principal_id
+  principal_type       = "ServicePrincipal"
+}
