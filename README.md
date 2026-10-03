@@ -75,7 +75,7 @@ Required repository configuration:
 - `mcp-docs` requires an Entra token (built-in authentication, no client secret): audience is its app registration, and the only accepted caller is the `worker` identity. It has no IP restriction because `worker` calls it from addresses that are not fixed.
 - App names carry a random suffix, so `worker` is given the `mcp-docs` address by construction (`func-mcp-docs-<suffix>.azurewebsites.net`) rather than by reference, which would be a cycle inside one resource.
 - One Application Insights component over a Log Analytics workspace capped at 1 GB a day.
-- The data-plane roles of the three identities (queues, storage) are assigned by bootstrap after this module's first apply, because their scopes are resources created here. Until then the apps exist but cannot start.
+- The data-plane roles of the three identities (queues, storage) are assigned by bootstrap, which reads this module's outputs to build their scopes. On a new environment the apps exist but cannot start until that second bootstrap apply.
 
 ## Identities and secrets
 
@@ -91,11 +91,11 @@ The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/ad
 
 | Identity | Attached to | Grants |
 |---|---|---|
-| `id-run-api` | `api` function app | `turnstile-secret-key` |
-| `id-run-worker` | `worker` function app | `anthropic-api-key-runtime` |
-| `id-run-mcp-docs` | `mcp-docs` function app | none yet |
+| `id-run-api` | `api` function app | `turnstile-secret-key`; blob owner and table contributor on its storage account; send on `jobs`, receive on `events` |
+| `id-run-worker` | `worker` function app | `anthropic-api-key-runtime`; blob owner on its storage account; receive on `jobs`, send on `events` |
+| `id-run-mcp-docs` | `mcp-docs` function app | blob owner on its storage account |
 
-Their grants on queues, tables and storage are scoped to resources the `agent` module creates, so they are added to bootstrap in a second apply, after that module exists. Granting them at resource-group scope instead would let the worker send and receive on every queue.
+Their grants on queues and storage are scoped to resources the `agent` module creates. Bootstrap reads that module's outputs from its state (`terraform_remote_state`, same backend) and builds each scope from them, so the names never appear here and a recreated module is followed by a bootstrap apply, not an edit. The order on a new environment is therefore bootstrap, `agent`, bootstrap again. Granting at resource-group scope instead would let the worker send and receive on every queue.
 
 `mcp-docs` is also represented by an Entra app registration with no credentials (`azuread` provider). It only names the audience of the token `worker` presents; the application ID URI is `api://<client id>`. The operator needs permission to register applications in the tenant.
 
