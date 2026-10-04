@@ -13,3 +13,7 @@ output "storage_accounts" {
 output "service_bus_namespace" {
   value = azurerm_servicebus_namespace.agent.name
 }
+
+output "api_url" {
+  value = "https://${local.api_hostname}"
+}

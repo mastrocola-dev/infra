@@ -13,3 +13,12 @@ variable "key_vault_name" {
   type    = string
   default = "kv-mastrocola-dev"
 }
+
+variable "domain" {
+  type    = string
+  default = "mastrocola.dev"
+}
+
+variable "cloudflare_zone_id" {
+  type = string
+}

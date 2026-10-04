@@ -6,6 +6,14 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
+    azapi = {
+      source  = "azure/azapi"
+      version = "~> 2.0"
+    }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.0"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -19,3 +27,7 @@ provider "azurerm" {
   features {}
   storage_use_azuread = true
 }
+
+provider "azapi" {}
+
+provider "cloudflare" {}
