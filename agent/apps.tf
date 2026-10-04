@@ -61,6 +61,18 @@ resource "azurerm_function_app_flex_consumption" "app" {
 
   site_config {
     application_insights_connection_string = azurerm_application_insights.agent.connection_string
+    ip_restriction_default_action          = each.key == "api" ? "Deny" : "Allow"
+
+    dynamic "ip_restriction" {
+      for_each = each.key == "api" ? local.cloudflare_cidrs : []
+
+      content {
+        name       = "cloudflare-${ip_restriction.key}"
+        ip_address = ip_restriction.value
+        action     = "Allow"
+        priority   = 100 + ip_restriction.key
+      }
+    }
 
     dynamic "cors" {
       for_each = each.key == "api" ? [var.site_origins] : []

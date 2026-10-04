@@ -1,7 +1,14 @@
 locals {
   api_hostname = "api.${var.domain}"
-  key_vault_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/rg-identity/providers/Microsoft.KeyVault/vaults/${var.key_vault_name}"
+  key_vault_id = lower("/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/rg-identity/providers/Microsoft.KeyVault/vaults/${var.key_vault_name}")
+
+  cloudflare_cidrs = concat(
+    sort(data.cloudflare_ip_ranges.cloudflare.ipv4_cidrs),
+    sort(data.cloudflare_ip_ranges.cloudflare.ipv6_cidrs),
+  )
 }
+
+data "cloudflare_ip_ranges" "cloudflare" {}
 
 resource "cloudflare_dns_record" "api_verification" {
   zone_id = var.cloudflare_zone_id
@@ -54,5 +61,27 @@ resource "cloudflare_dns_record" "api" {
   depends_on = [
     azurerm_app_service_custom_hostname_binding.api,
     cloudflare_zone_setting.ssl,
+  ]
+}
+
+resource "cloudflare_ruleset" "rate_limit" {
+  zone_id = var.cloudflare_zone_id
+  name    = "rate limit"
+  kind    = "zone"
+  phase   = "http_ratelimit"
+
+  rules = [
+    {
+      description = "api requests per address"
+      expression  = "starts_with(http.request.uri.path, \"/\")"
+      action      = "block"
+
+      ratelimit = {
+        characteristics     = ["ip.src", "cf.colo.id"]
+        period              = 10
+        requests_per_period = 20
+        mitigation_timeout  = 10
+      }
+    }
   ]
 }
