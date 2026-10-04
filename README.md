@@ -88,7 +88,7 @@ Every pipeline authenticates as its repository's own user-assigned managed ident
 
 | Identity | Federated subjects | Grants |
 |---|---|---|
-| `id-infra` | `main`, `pull_request` | Contributor on `rg-portfolio-dev`, state blob, `Web Async Operation Reader`, `cloudflare-api-token`, vault metadata, `Managed Identity Operator` on each runtime identity |
+| `id-infra` | `main`, `pull_request` | Contributor on `rg-portfolio-dev`, state blob, `Web Async Operation Reader`, `cloudflare-api-token`, vault metadata, `Key Vault Certificate Deployer` on the vault, `Managed Identity Operator` on each runtime identity |
 | `id-www` | `main`, `pull_request` | `Static Web App Secrets Reader` (custom: list deployment tokens) on `rg-portfolio-dev` |
 | `id-docs` | `main`, `pull_request` | `anthropic-api-key-ci`; deploys `mcp-docs` (`Website Contributor` on that app, `Reader` on its plan) |
 | `id-service-agent` | `main` | deploys `worker` (`Website Contributor` on that app, `Reader` on its plan) |
@@ -117,6 +117,8 @@ read -rs VALUE && az keyvault secret set --vault-name kv-mastrocola-dev --name <
 
 The Cloudflare origin certificate of `api.mastrocola.dev` follows the same idea. Bootstrap declares `origin-api` as a self-signed certificate generated inside the vault, only so that a role can be scoped to it; the real certificate is imported over it out of band and its private key never reaches Terraform (`certificate_policy` is excluded from reconciliation, since the import rewrites it). The App Service resource provider holds `Key Vault Certificate User` on that certificate and on the secret that backs it, nothing else in the vault. The operator holds `Key Vault Certificates Officer` to run the import.
 
+Azure Resource Manager refuses to link a site certificate to a vault unless the caller holds `Microsoft.KeyVault/vaults/deploy/action` on it, so `id-infra` holds `Key Vault Certificate Deployer`, a custom role with that single action. The action reads nothing by itself. It becomes a way to read every secret, through template deployments that reference them, only on a vault enabled for template deployment — hence `enabled_for_template_deployment = false`, declared explicitly. Never turn it on in this vault: `id-infra` cannot change it, bootstrap can.
+
 ### Origin certificate
 
 Valid for one year; `secret-expiry` flags it 30 days ahead. The key is generated on the operator's machine, signed by Cloudflare and imported into the vault; it is never written to a repository, a chat or Terraform state.
@@ -133,11 +135,12 @@ In the Cloudflare dashboard: **SSL/TLS → Origin Server → Create Certificate 
 curl -fsS https://developers.cloudflare.com/ssl/static/origin_ca_rsa_root.pem -o root.pem
 openssl verify -CAfile root.pem origin.pem
 openssl pkcs12 -export -inkey origin.key -in origin.pem -certfile root.pem -out origin.pfx -passout pass:
-az keyvault certificate import --vault-name kv-mastrocola-dev --name origin-api --file origin.pfx --query attributes.expires -o tsv
+az keyvault certificate import --vault-name kv-mastrocola-dev --name origin-api --file origin.pfx --query x509ThumbprintHex -o tsv
+openssl x509 -in origin.pem -noout -fingerprint -sha1 | tr -d ':'
 shred -u origin.key origin.pfx
 ```
 
-`openssl verify` must answer `origin.pem: OK` and the last command prints the new expiry. App Service picks the new version up within 24 hours; nothing is redeployed.
+`openssl verify` must answer `origin.pem: OK`, and the thumbprint printed by the import must equal the fingerprint printed after it. The issuer shown in the certificate policy stays `Self` after an import and proves nothing. App Service picks the new version up within 24 hours; nothing is redeployed.
 
 `expiration_date` and `tags` are excluded from reconciliation: rotation writes the first, and `az keyvault secret set` adds a `file-encoding` tag on every write. The operator holds `Key Vault Secrets Officer` on the vault; a 90-second `time_sleep` lets that assignment propagate before the placeholders are written. Azure rejects concurrent federated credential writes on one identity (409 Conflict); when adding several at once, apply with `-parallelism=1`.
 
