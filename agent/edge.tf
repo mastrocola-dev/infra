@@ -1,6 +1,6 @@
 locals {
   api_hostname = "api.${var.domain}"
-  key_vault_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/rg-identity/providers/Microsoft.KeyVault/vaults/${var.key_vault_name}"
+  key_vault_id = lower("/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/rg-identity/providers/Microsoft.KeyVault/vaults/${var.key_vault_name}")
 
   cloudflare_cidrs = concat(
     sort(data.cloudflare_ip_ranges.cloudflare.ipv4_cidrs),
