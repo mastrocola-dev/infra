@@ -6,6 +6,7 @@ locals {
     www           = 1357772879
     docs          = 1356325722
     service-agent = 1384462777
+    service-api   = 1403767411
   }
 
   github_federations = {
@@ -16,6 +17,7 @@ locals {
     docs-main          = { repository = "docs", ref = "ref:refs/heads/main" }
     docs-pr            = { repository = "docs", ref = "pull_request" }
     service-agent-main = { repository = "service-agent", ref = "ref:refs/heads/main" }
+    service-api-main   = { repository = "service-api", ref = "ref:refs/heads/main" }
   }
 
   principals = merge(

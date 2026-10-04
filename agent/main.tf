@@ -49,6 +49,7 @@ locals {
   app_settings = {
     api = merge(local.service_bus_settings, {
       ServiceBus__clientId = data.azurerm_user_assigned_identity.runtime["api"].client_id
+      TURNSTILE_SECRET_URI = "https://${var.key_vault_name}.vault.azure.net/secrets/turnstile-secret-key"
     })
     worker = merge(local.service_bus_settings, {
       ServiceBus__clientId  = data.azurerm_user_assigned_identity.runtime["worker"].client_id

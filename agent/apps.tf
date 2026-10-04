@@ -61,6 +61,14 @@ resource "azurerm_function_app_flex_consumption" "app" {
 
   site_config {
     application_insights_connection_string = azurerm_application_insights.agent.connection_string
+
+    dynamic "cors" {
+      for_each = each.key == "api" ? [var.site_origins] : []
+
+      content {
+        allowed_origins = cors.value
+      }
+    }
   }
 
   dynamic "auth_settings_v2" {

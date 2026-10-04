@@ -73,6 +73,7 @@ resource "azurerm_role_assignment" "runtime" {
 locals {
   deployers = {
     service-agent = "worker"
+    service-api   = "api"
     docs          = "mcp-docs"
   }
 
