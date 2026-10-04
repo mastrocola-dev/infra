@@ -32,6 +32,7 @@ env:
   ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
   TF_VAR_mcp_docs_client_id: ${{ vars.MCP_DOCS_CLIENT_ID }}
+  TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
   TF_IN_AUTOMATION: "true"
   WORKING_DIR: agent
 
@@ -50,6 +51,14 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read Cloudflare token
+        run: |
+          set -euo pipefail
+          token=$(az keyvault secret show --vault-name '${{ vars.KEY_VAULT_NAME }}' --name cloudflare-api-token --query value -o tsv)
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "CLOUDFLARE_API_TOKEN=$token" >> "$GITHUB_ENV"
 
       - uses: hashicorp/setup-terraform@v4
         with:

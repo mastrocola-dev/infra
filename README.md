@@ -8,7 +8,7 @@ Azure infrastructure for [mastrocola.dev](https://github.com/mastrocola-dev), ma
 bootstrap/     State backend, identities, Key Vault, role assignments, cost guardrails — applied manually
 foundation/    Core platform resources — applied via CI
 site/          Public site hosting and DNS — applied via CI
-agent/         Agent runtime: function apps, queues, storage, telemetry — applied via CI
+agent/         Agent runtime: function apps, queues, storage, telemetry, public edge — applied via CI
 ```
 
 The split follows the privilege boundary, not just the chicken-and-egg problem:
@@ -28,7 +28,7 @@ One workflow per root module, same shape, separate state keys and concurrency gr
 | [`site.yml`](.github/workflows/site.yml) | `site/**` | `site.tfstate` |
 | [`agent.yml`](.github/workflows/agent.yml) | `agent/**` | `agent.tfstate` |
 
-[`secret-expiry.yml`](.github/workflows/secret-expiry.yml) runs weekly and on demand: it reads secret metadata (never values) and fails when any secret has no expiry or expires within 30 days — the failure notification is the rotation reminder. GitHub disables scheduled workflows after 60 days without repository activity and emails a warning first; re-enable it from the Actions tab.
+[`secret-expiry.yml`](.github/workflows/secret-expiry.yml) runs weekly and on demand: it reads secret metadata (never values) and fails when any secret has no expiry or expires within 30 days. Certificates are covered through the secrets that back them (`--include-managed`), which expire with the certificate — the failure notification is the rotation reminder. GitHub disables scheduled workflows after 60 days without repository activity and emails a warning first; re-enable it from the Actions tab.
 
 [`terraform-check.yml`](.github/workflows/terraform-check.yml) runs `fmt -check` from the root and `validate` in every root module — `bootstrap` included — on any `.tf` change. It needs no state and no credentials (`init -backend=false`, `contents: read`), so it is the only gate that covers `bootstrap`.
 
@@ -72,7 +72,10 @@ Required repository configuration:
 - One storage account per app. The Functions host needs account-wide blob access, so a shared account would let each app read the others' code packages and host keys. Shared keys are disabled; host and deployment storage authenticate as the app's identity (`AzureWebJobsStorage__*` settings and `storage_authentication_type`).
 - Each app runs as its user-assigned identity from bootstrap, read here as a data source. No app has a system-assigned identity and no setting holds a credential: `worker` reads the Anthropic key from Key Vault at run time, from the address in `ANTHROPIC_API_KEY_URI`.
 - Service Bus Basic with SAS authentication disabled. `jobs` dead-letters after two deliveries and drops messages older than ten minutes — a question nobody is waiting for is not worth answering. `events` keeps the default delivery count and one hour, so cost reports survive a short outage of `api`.
-- `api` answers browsers only from the site's origins (CORS on the app, not in code) and reads the Turnstile secret from Key Vault at run time, from the address in `TURNSTILE_SECRET_URI`. Until the edge is in place it is reachable directly, and its per-address quota can be bypassed by forging `CF-Connecting-IP`; the site does not call it before that.
+- `api` answers browsers only from the site's origins (CORS on the app, not in code) and reads the Turnstile secret from Key Vault at run time, from the address in `TURNSTILE_SECRET_URI`. Until the origin accepts only Cloudflare addresses it is also reachable directly, and its per-address quota can be bypassed by forging `CF-Connecting-IP`; the site does not call it before that.
+- `api` is published as `api.mastrocola.dev` behind the Cloudflare proxy (`edge.tf`). The domain is validated by the `asuid.api` TXT record, so the proxied CNAME never has to point at Azure unproxied. The zone runs in Full (strict) mode, declared here although it is zone-wide: `site` records are DNS-only and unaffected.
+- The origin presents a Cloudflare origin certificate, imported from Key Vault as a site-scoped certificate. `azurerm` does not manage `Microsoft.Web/sites/certificates`, hence the `azapi` provider for that one resource, with schema validation off because the type could not be confirmed in the provider's embedded schema. The import is done by the App Service resource provider under the role bootstrap grants it; the platform follows a renewed certificate within 24 hours, and the next plan then shows the binding moving to the new thumbprint.
+- The certificate must be in the vault before the binding is applied: with the bootstrap placeholder the apply succeeds and Cloudflare answers 526. Rotation: [Origin certificate](#origin-certificate).
 - `mcp-docs` requires an Entra token (built-in authentication, no client secret): audience is its app registration, and the only accepted caller is the `worker` identity. It has no IP restriction because `worker` calls it from addresses that are not fixed.
 - App names carry a random suffix, so `worker` is given the `mcp-docs` address by construction (`func-mcp-docs-<suffix>.azurewebsites.net`) rather than by reference, which would be a cycle inside one resource.
 - **Provider defect, worked around in the pipeline.** `azurerm_function_app_flex_consumption` always writes an `AzureWebJobsStorage` connection string, with an empty key when storage is reached by identity (verified in the provider source at 4.81.0 and on its main branch). The Functions host prefers that setting over `AzureWebJobsStorage__*`, fails to authenticate and never starts — every key and function listing then answers `Bad Request`. The `agent` workflow deletes the setting from every function app right after each apply. Overriding it with an empty value in `app_settings` was rejected: the provider hides that key when reading state, so every plan would show a change. Remove the step when the provider stops writing the setting for identity-based storage.
@@ -113,6 +116,28 @@ read -rs VALUE && az keyvault secret set --vault-name kv-mastrocola-dev --name <
 ```
 
 The Cloudflare origin certificate of `api.mastrocola.dev` follows the same idea. Bootstrap declares `origin-api` as a self-signed certificate generated inside the vault, only so that a role can be scoped to it; the real certificate is imported over it out of band and its private key never reaches Terraform (`certificate_policy` is excluded from reconciliation, since the import rewrites it). The App Service resource provider holds `Key Vault Certificate User` on that certificate and on the secret that backs it, nothing else in the vault. The operator holds `Key Vault Certificates Officer` to run the import.
+
+### Origin certificate
+
+Valid for one year; `secret-expiry` flags it 30 days ahead. The key is generated on the operator's machine, signed by Cloudflare and imported into the vault; it is never written to a repository, a chat or Terraform state.
+
+```bash
+cd "$(mktemp -d)"
+openssl req -new -newkey rsa:2048 -nodes -keyout origin.key -out origin.csr -subj '/CN=api.mastrocola.dev'
+cat origin.csr
+```
+
+In the Cloudflare dashboard: **SSL/TLS → Origin Server → Create Certificate → Use my private key and CSR**, paste the CSR printed above, hostname `api.mastrocola.dev`, validity 1 year. Save the certificate shown as `origin.pem` in the same directory, then:
+
+```bash
+curl -fsS https://developers.cloudflare.com/ssl/static/origin_ca_rsa_root.pem -o root.pem
+openssl verify -CAfile root.pem origin.pem
+openssl pkcs12 -export -inkey origin.key -in origin.pem -certfile root.pem -out origin.pfx -passout pass:
+az keyvault certificate import --vault-name kv-mastrocola-dev --name origin-api --file origin.pfx --query attributes.expires -o tsv
+shred -u origin.key origin.pfx
+```
+
+`openssl verify` must answer `origin.pem: OK` and the last command prints the new expiry. App Service picks the new version up within 24 hours; nothing is redeployed.
 
 `expiration_date` and `tags` are excluded from reconciliation: rotation writes the first, and `az keyvault secret set` adds a `file-encoding` tag on every write. The operator holds `Key Vault Secrets Officer` on the vault; a 90-second `time_sleep` lets that assignment propagate before the placeholders are written. Azure rejects concurrent federated credential writes on one identity (409 Conflict); when adding several at once, apply with `-parallelism=1`.
 
