@@ -14,6 +14,9 @@ resource "azurerm_key_vault" "main" {
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
   rbac_authorization_enabled = true
+
+  enabled_for_template_deployment = false
+
   soft_delete_retention_days = 7
   purge_protection_enabled   = false
   tags                       = local.tags
@@ -115,4 +118,25 @@ resource "azurerm_role_assignment" "app_service_origin_certificate" {
   role_definition_name = "Key Vault Certificate User"
   principal_id         = data.azuread_service_principal.app_service.object_id
   principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_definition" "key_vault_certificate_deployer" {
+  name        = "Key Vault Certificate Deployer"
+  scope       = azurerm_resource_group.identity.id
+  description = "Lets App Service resources reference a certificate in a vault"
+
+  permissions {
+    actions = [
+      "Microsoft.KeyVault/vaults/deploy/action",
+    ]
+  }
+
+  assignable_scopes = [azurerm_resource_group.identity.id]
+}
+
+resource "azurerm_role_assignment" "ci_certificate_deployer" {
+  scope              = azurerm_key_vault.main.id
+  role_definition_id = azurerm_role_definition.key_vault_certificate_deployer.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.ci["infra"].principal_id
+  principal_type     = "ServicePrincipal"
 }
