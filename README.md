@@ -42,7 +42,7 @@ One workflow per root module, same shape, separate state keys and concurrency gr
 
 The pipelines authenticate to Azure via OIDC federation as their repository's own managed identity — see [Identities and secrets](#identities-and-secrets). Storage access uses Entra ID tokens exclusively (`storage_use_azuread`); shared account keys are disabled everywhere.
 
-The `site` module additionally authenticates to Cloudflare with an API token scoped to DNS edit on the `mastrocola.dev` zone only. The pipeline reads it from Key Vault at run time; GitHub stores no secrets.
+The `site` and `agent` modules additionally authenticate to Cloudflare with one API token, scoped to the `mastrocola.dev` zone only: DNS edit for the records of both, Zone Settings edit for the encryption mode and Zone WAF edit for the rate limiting rule. Each pipeline reads it from Key Vault at run time; GitHub stores no secrets.
 
 Required repository configuration:
 
@@ -54,7 +54,7 @@ Required repository configuration:
 | Variable | `KEY_VAULT_NAME` | Vault holding `cloudflare-api-token` |
 | Variable | `TFSTATE_RESOURCE_GROUP` | State backend resource group |
 | Variable | `TFSTATE_STORAGE_ACCOUNT` | State backend storage account |
-| Variable | `CLOUDFLARE_ZONE_ID` | Zone holding the site records |
+| Variable | `CLOUDFLARE_ZONE_ID` | Zone holding the site and `api` records |
 | Variable | `MCP_DOCS_CLIENT_ID` | App registration that names the `mcp-docs` token audience (bootstrap output) |
 
 ## Site specifics
@@ -165,7 +165,7 @@ Bootstrap state lives in the same remote backend as everything else (`bootstrap.
  
 The privilege boundary is unchanged by where state lives: bootstrap is applied exclusively by a human Owner via `az login`, never by CI. Authentication to the state blob uses the operator's Entra identity.
  
-Requires Terraform `>= 1.11` (write-only arguments). Outputs feed the `TFSTATE_*`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `KEY_VAULT_NAME`, `MCP_DOCS_AUDIENCE` and `MCP_DOCS_CLIENT_ID` repository variables. Resources that predated this code were adopted into state via one-shot `import` blocks, removed once consumed.
+Requires Terraform `>= 1.11` (write-only arguments). Outputs feed the `TFSTATE_*`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `KEY_VAULT_NAME` and `MCP_DOCS_CLIENT_ID` repository variables; the token audience of `mcp-docs` is derived from the last one, so no variable holds it. Resources that predated this code were adopted into state via one-shot `import` blocks, removed once consumed.
  
 Bootstrap is validated by `terraform-check` but never planned or applied by CI — read its plans with extra care.
 
@@ -176,4 +176,4 @@ Bootstrap is validated by `terraform-check` but never planned or applied by CI �
 - Terraform `1.16.4`, pinned in every workflow
 - `outputs.tf` is a separate file in every root module
 - Resource names retain the original `portfolio` prefix — renaming forces destroy/recreate; accepted as debt until a new environment supersedes them. Tags carry the current `mastrocola-dev` identity
-- Architecture rationale lives in [docs](https://github.com/mastrocola-dev/docs); this README covers operation only
+- Architecture rationale lives in [docs](https://github.com/mastrocola-dev/docs); this README covers operation only. The runtime as a whole is pictured in [agent-runtime](https://github.com/mastrocola-dev/docs/blob/main/architecture/agent-runtime.md)
