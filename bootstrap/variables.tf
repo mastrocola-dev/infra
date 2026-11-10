@@ -17,7 +17,7 @@ variable "notification_email" {
 variable "monthly_budget_amount" {
   description = "Monthly budget cap in the subscription's billing currency."
   type        = number
-  default     = 20
+  default     = 40
 }
 
 variable "budget_start_date" {

@@ -4,6 +4,10 @@ locals {
     anthropic-api-key-ci      = "docs"
     anthropic-api-key-runtime = "run-worker"
     turnstile-secret-key      = "run-api"
+    anthropic-api-key-finance = "run-finance"
+    finance-db-password       = "run-finance"
+    finance-session-key       = "run-finance"
+    finance-web-secret        = "run-finance"
   }
 }
 

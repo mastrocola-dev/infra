@@ -1,5 +1,5 @@
 locals {
-  runtime_identities = toset(["api", "worker", "mcp-docs"])
+  runtime_identities = toset(["api", "worker", "mcp-docs", "finance"])
 }
 
 resource "azurerm_user_assigned_identity" "runtime" {
