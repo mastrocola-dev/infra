@@ -24,6 +24,17 @@ output "foundation_backend_config" {
   EOT
 }
 
+output "finance_backend_config" {
+  description = "Backend config of the finance repository (its TFSTATE_* variables and key)."
+  value       = <<-EOT
+    resource_group_name  = "${azurerm_resource_group.tfstate.name}"
+    storage_account_name = "${azurerm_storage_account.tfstate.name}"
+    container_name       = "${azurerm_storage_container.tfstate_finance.name}"
+    key                  = "finance.tfstate"
+    use_azuread_auth     = true
+  EOT
+}
+
 output "tenant_id" {
   description = "Entra tenant ID, for the AZURE_TENANT_ID repository variable."
   value       = data.azurerm_client_config.current.tenant_id
