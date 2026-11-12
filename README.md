@@ -91,7 +91,7 @@ The household ledger of [finance](https://github.com/mastrocola-dev/finance) kee
 - `rg-finance-dev`, the only resource group `id-finance` may change
 - `tfstate-finance`, a state container of its own: `id-finance` can plan from a pull request, so it holds no role on the shared `tfstate` container and cannot read another module's state
 - `id-run-finance`, attached to its container apps and migration job, and the four secrets they read
-- `finance-db-password`, a placeholder like every secret: the operator writes the value, and `id-finance` reads it only to set the PostgreSQL administrator password (ephemeral, never in state). Rotating it is a new value plus a plan and apply of `finance`
+- `finance-db-password`, a placeholder like every secret: the operator writes the value, and `id-finance` reads it only to set the PostgreSQL administrator password (ephemeral, never in state). Rotating it is a new value plus a plan and apply of `finance`. The provider resolves the vault URI through the management plane first, so `id-finance` also holds `Reader` on the vault: control plane only, no secret values
 
 Container Apps and PostgreSQL need their resource providers registered once per subscription, which `id-finance` cannot do: `az provider register --namespace Microsoft.App` and `az provider register --namespace Microsoft.DBforPostgreSQL` (both idempotent). The finance module sets `resource_provider_registrations = "none"`.
 
@@ -108,7 +108,7 @@ Every pipeline authenticates as its repository's own user-assigned managed ident
 | `id-docs` | `main`, `pull_request` | `anthropic-api-key-ci`; deploys `mcp-docs` (`Website Contributor` on that app, `Reader` on its plan) |
 | `id-service-agent` | `main` | deploys `worker` (`Website Contributor` on that app, `Reader` on its plan) |
 | `id-service-api` | `main` | deploys `api` (`Website Contributor` on that app, `Reader` on its plan) |
-| `id-finance` | `main`, `pull_request` | Contributor on `rg-finance-dev`, blob contributor on the `tfstate-finance` container only, `finance-db-password`, `Managed Identity Operator` on `id-run-finance` |
+| `id-finance` | `main`, `pull_request` | Contributor on `rg-finance-dev`, blob contributor on the `tfstate-finance` container only, `finance-db-password`, `Reader` on the vault, `Managed Identity Operator` on `id-run-finance` |
 
 The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/adr/007-agent-runtime.md)) adds one identity per function app. They are not federated: the platform attaches them to the apps. `id-infra` holds `Managed Identity Operator` on each one, which lets the `agent` module read and attach it but not federate it or change its grants. Whoever controls that pipeline can therefore act as a runtime identity by attaching it to a resource of its own — the price of letting CI deploy the apps.
 
