@@ -36,3 +36,10 @@ resource "azurerm_role_assignment" "finance_db_password_reader" {
   principal_id         = azurerm_user_assigned_identity.ci["finance"].principal_id
   principal_type       = "ServicePrincipal"
 }
+
+resource "azurerm_role_assignment" "finance_vault_reader" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci["finance"].principal_id
+  principal_type       = "ServicePrincipal"
+}
