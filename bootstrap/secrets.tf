@@ -8,6 +8,7 @@ locals {
     finance-db-password       = "run-finance"
     finance-session-key       = "run-finance"
     finance-web-secret        = "run-finance"
+    finance-extract-key       = "run-finance"
   }
 }
 

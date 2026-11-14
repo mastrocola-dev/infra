@@ -90,7 +90,7 @@ The household ledger of [finance](https://github.com/mastrocola-dev/finance) kee
 
 - `rg-finance-dev`, the only resource group `id-finance` may change
 - `tfstate-finance`, a state container of its own: `id-finance` can plan from a pull request, so it holds no role on the shared `tfstate` container and cannot read another module's state
-- `id-run-finance`, attached to its container apps and migration job, and the four secrets they read
+- `id-run-finance`, attached to its container apps and migration job, and the five secrets they read
 - `finance-db-password`, a placeholder like every secret: the operator writes the value, and `id-finance` reads it only to set the PostgreSQL administrator password (ephemeral, never in state). Rotating it is a new value plus a plan and apply of `finance`. The provider resolves the vault URI through the management plane first, so `id-finance` also holds `Reader` on the vault: control plane only, no secret values
 
 Container Apps and PostgreSQL need their resource providers registered once per subscription, which `id-finance` cannot do: `az provider register --namespace Microsoft.App` and `az provider register --namespace Microsoft.DBforPostgreSQL` (both idempotent). The finance module sets `resource_provider_registrations = "none"`.
@@ -117,7 +117,7 @@ The agent runtime ([ADR-007](https://github.com/mastrocola-dev/docs/blob/main/ad
 | `id-run-api` | `api` function app | `turnstile-secret-key`; blob owner and table contributor on its storage account; send on `jobs`, receive on `events` |
 | `id-run-worker` | `worker` function app | `anthropic-api-key-runtime`; blob owner on its storage account; receive on `jobs`, send on `events` |
 | `id-run-mcp-docs` | `mcp-docs` function app | blob owner on its storage account |
-| `id-run-finance` | `finance` container apps and migration job | `finance-db-password`, `finance-session-key`, `finance-web-secret`, `anthropic-api-key-finance` |
+| `id-run-finance` | `finance` container apps and migration job | `finance-db-password`, `finance-session-key`, `finance-web-secret`, `anthropic-api-key-finance`, `finance-extract-key` |
 
 Their grants on queues and storage are scoped to resources the `agent` module creates. Bootstrap reads that module's outputs from its state (`terraform_remote_state`, same backend) and builds each scope from them, so the names never appear here and a recreated module is followed by a bootstrap apply, not an edit. The order on a new environment is therefore bootstrap, `agent`, bootstrap again. Granting at resource-group scope instead would let the worker send and receive on every queue.
 
